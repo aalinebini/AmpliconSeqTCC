@@ -1,6 +1,6 @@
 # ![nf-core/ampliconseq](docs/images/nf-core-ampliconseq_logo.png)
 
-**TCC project**.
+**Pipeline for DNA amplicon analysis**.
 
 [![GitHub Actions CI Status](https://github.com/nf-core/ampliconseq/workflows/nf-core%20CI/badge.svg)](https://github.com/nf-core/ampliconseq/actions)
 [![GitHub Actions Linting Status](https://github.com/nf-core/ampliconseq/workflows/nf-core%20linting/badge.svg)](https://github.com/nf-core/ampliconseq/actions)
