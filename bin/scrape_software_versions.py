@@ -8,7 +8,9 @@ regexes = {
     "nf-core/ampliconseq": ["v_pipeline.txt", r"(\S+)"],
     "Nextflow": ["v_nextflow.txt", r"(\S+)"],
     "MultiQC": ["v_multiqc.txt", r"multiqc, version (\S+)"],
-    "Trimmomatic": ['v_trimmomatic.txt', r"(\S+)"]
+    "Trimmomatic": ['v_trimmomatic.txt', r"(\S+)"],
+    "Flash": ['v_flash.txt', r"FLASH v(\d+.\d+.\d+)"],
+
 }
 results = OrderedDict()
 results["nf-core/ampliconseq"] = '<span style="color:#999999;">N/A</span>'

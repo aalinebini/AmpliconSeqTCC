@@ -23,7 +23,7 @@ def helpMessage() {
       -profile [str]                  Configuration profile to use. Can use multiple (comma separated)
                                       Available: conda, docker, singularity, test, awsbatch, <institute> and more
     Options:
-      -y [str]                        Mismatches in primer matching (number, default 0)
+      --y [str]                       Mismatches in primer matching (number, default 1)
       --d [str]                       Parameter for trimming reads separated by ':', they are quality_score:minimum_read_length (default 20:100)
     References                        If not specified in the configuration file or you wish to overwrite any of the references
       --fasta [file]                  Path to fasta reference
@@ -101,38 +101,33 @@ if (params.input){
     Channel
         .fromFilePairs( params.input  + params.extension, size: 2 )
         .ifEmpty { exit 1, "Cannot find any reads matching: ${params.input}/*${params.extension}\nNB: Path needs to be enclosed in quotes!" }
-        .into { ch_read_files_fastq; ch_files }
+        .into { ch_read_files_fastq }
 }
 
 if (params.key_file){
-    Channel
-        .from( file(params.key_file) )
-        .ifEmpty { exit 1, "Cannot find any file key_file" }
-        .splitCsv(sep:'\t')
-        .map { row ->
-            if (row.size() == 2){
-                def primer_name = row[0]
-                def primer_sequence = row[1]
 
-                // verificar se as sequencias contem ACTG
-                if (primer_sequence =~/[^ACGT]/){
-                    exit 1, "In key_file, the gene $primer_name sequence $primer_sequence has non 'ACTG' charactors! Exit now!"
-                }
+    key_file = file(params.key_file)
+    def len_primer_list = []
+    barcode_file = file('results/barcode.txt')
+    barcode_file.text = ""
 
-                return [primer_name, primer_sequence]
-            } else {
-                exit 1, "Input key_file contains row with ${row.size()} column(s). Expects 2."
-            }
+    key_file
+    .readLines()
+    .each{
+        (full, name, strand, seq) = (it =~ /(\S+)_([FR])\t(\S+)$/)[0]
+        if (seq =~/[^ACGT]/){ exit 1, "In key_file, the gene $name sequence $seq has non 'ACTG' charactors! Exit now!" }
+        def primer_length = seq.size()
+        len_primer_list.add(primer_length)
+    }
+    .each{
+        (full, name, strand, seq) = (it =~ /(\S+)_([FR])\t(\S+)$/)[0]
+        if(strand == 'F'){
+            seq = seq.substring(0, len_primer_list.min())
+            barcode_file << "$name\t$seq\n"
         }
-        .set { ch_key_file }
-} else {
-    { exit 1, "Option --key_file missing"}
-}
+    }
+} else { exit 1, "Option --key_file missing" }
 
-// ch_key_file.subscribe { println it }
-
-//  trimming parameters
-// --d (quality score:minimum_read_length, default 20:100)
 if (params.d){
     
     parameter_d = params.d ==~ /^(\d+)\:(\d+)$/
@@ -147,7 +142,20 @@ if (params.d){
     d_trim = '20:100'
 }
 
-// print params.key_file + '\n'
+if (params.y){
+
+    parameter_y = params.y ==~ /^(\d+)$/
+
+    if (parameter_y){
+        y_mismatches = params.y
+    } else {
+        println "--y parameter with error. Default set 1!"
+        y_mismatches = 1
+    }
+} else {
+    y_mismatches = 1
+}
+
 
 // code to remove --------------------------------
 // if (params.input_paths) {
@@ -173,7 +181,8 @@ summary['Run Name']         = custom_runName ?: workflow.runName
 // TODO nf-core: Report custom parameters here
 summary['Input']            = params.input
 summary['Key_file']         = params.key_file
-summary['d']                = d_trim
+summary['Quality Score (d)']= d_trim
+summary['Primer Mism. (y)'] = y_mismatches
 summary['Max Resources']    = "$params.max_memory memory, $params.max_cpus cpus, $params.max_time time per job"
 if (workflow.containerEngine) summary['Container'] = "$workflow.containerEngine - $workflow.container"
 summary['Output dir']       = params.outdir
@@ -240,6 +249,7 @@ process get_software_versions {
     
     multiqc --version > v_multiqc.txt
     trimmomatic -version > v_trimmomatic.txt
+    flash -v > v_flash.txt
     
     scrape_software_versions.py &> software_versions_mqc.yaml
     """
@@ -248,10 +258,6 @@ process get_software_versions {
 /*
  * print the channel content
  */
-// print "\n+++++++++++++++++++++++++++++++++++++++++++\n"
-// print "++++++++++++++++ INPUT FILES ++++++++++++++"
-// print "\n+++++++++++++++++++++++++++++++++++++++++++\n"
-// ch_files.subscribe { println it[1][1] }
 
 // #########################################
 // ######## START MY WORKFLOW ##############
@@ -259,9 +265,7 @@ process get_software_versions {
 
 /*
     STEP 1 - the sequencing information is trimmed for the adaptors and keeping reads with a minimum quality
-    input: reads paired end de cada amostra/
 */
-
 process trimming {
     tag "$sample"
     publishDir "${params.outdir}/trimmed", mode: params.publish_dir_mode
@@ -270,15 +274,13 @@ process trimming {
     tuple val(sample), file(reads) from ch_read_files_fastq
 
     output:
-    tuple path(fq_1_paired), path(fq_2_paired) into ch_out_trimmomatic
+    tuple val(sample), file(fq_1_paired), file(fq_2_paired) into ch_out_trimmomatic
 
     script:
-
     fq_1_paired = sample + '.r1.fastq'
     fq_1_unpaired = sample + '.u1.fastq'
     fq_2_paired = sample + '.r2.fastq'
     fq_2_unpaired = sample + '.u2.fastq'
-
     (full, quality_trimmer, minimum_length) = (d_trim =~ /(\d+)\:(\d+)/)[0]
 
     """
@@ -293,6 +295,137 @@ process trimming {
     LEADING:$quality_trimmer TRAILING:$quality_trimmer SLIDINGWINDOW:4:15 MINLEN:$minimum_length
     """
 }
+// ch_out_trimmomatic.view { "Received: $it" }
+
+/*
+    STEP 2 - a consolidation of the reads is performed - Contiging the overlapping read pairs and discard the non-overlapping reads
+*/
+process assembleReadPairs {
+    tag "$sample"
+    publishDir "${params.outdir}/assemble", mode: params.publish_dir_mode
+
+    input:
+    tuple val(sample), file(read_1), file(read_2) from ch_out_trimmomatic
+
+    output:
+    tuple val(sample), file("*.extendedFrags.fastq") into ch_out_assemble
+
+    """
+    flash -o ${sample} ${read_1} ${read_2}
+    """
+}
+
+/*
+    STEP 3 - the reads identified in the sequence files are split based on the sequences of the forward primer
+*/
+process splittingByPrimer {
+    tag "$sample"
+    publishDir "${params.outdir}/splitted", mode: params.publish_dir_mode
+
+    input:
+    tuple val(sample), file(reads_extendedFrags) from ch_out_assemble
+
+    output:
+    tuple val(sample), file("*") into ch_out_split
+    file("*") into ch_out_split_aux
+
+    script:
+
+    prefix = sample + '_tig_'
+
+    """
+    fastx_barcode_splitter.pl --bcfile $barcode_file --prefix $prefix --bol --mismatches $y_mismatches < ${reads_extendedFrags}
+    """
+}
+
+ch_out_split_aux
+.flatten()
+.map{ file ->
+    (full, sample_name, primer_name) = (file =~ /(\S+)_tig_(\S+)/)[0]
+    return tuple(primer_name, full)
+}
+.groupTuple(by:0)
+.set { split_files }
+
+/*
+ *  STEP 4 - the reads that are identical in sequences are grouped by sample
+ */
+ process collapsingBySample {
+     tag "$sample"
+     publishDir "${params.outdir}/collapse", mode: params.publish_dir_mode
+
+     input:
+     tuple val(sample), path(files_splitted) from ch_out_split
+
+     output:
+     tuple val(sample), file("*") into ch_out_collapse_sample
+
+    script:
+    """
+     for file in ${files_splitted}; do
+        if [ -s \$file ]; then {
+            OUT=\$(echo \$file | sed 's/_tig_/_/g')
+            fastx_collapser -Q33 -i \$file -o "\${OUT}"
+        }
+        else
+            continue
+        fi
+     done
+     """
+ }
+
+/*
+ *  STEP 5 - the grouped files are collapsed/grouped according to the primers
+ */
+process mergeFastq {
+    tag "$primer"
+    publishDir "${params.outdir}/merged", mode: params.publish_dir_mode
+
+    input:
+    set primer, samples from split_files
+
+    output:
+    tuple val(primer), file("${primer}.tig.fastq") into ch_merged
+
+    when:
+    primer != 'unmatched'
+    
+    script:
+    """
+    cat ${samples.collect{it}.join(" ")} > ${primer}.tig.fastq
+    """
+}
+
+process collapsingByPrimer {
+    tag "$primer"
+    publishDir "${params.outdir}/merged", mode: params.publish_dir_mode
+
+    input:
+    tuple val(primer), file(primer_merged) from ch_merged
+
+    output:
+    tuple val(primer), file("${primer}") into ch_out_collapse_primer
+    
+    script:
+    """
+    if [ -s ${primer} ]; then {
+        fastx_collapser -i ${primer_merged} -o ${primer}
+    } else {
+        cat > ${primer}
+    }
+    fi
+    """
+}
+
+// ch_out_collapse_primer.view {"Received: $it"}
+
+/*
+ *  STEP 6 - the consolidation in by locus-sample bases of the information recovered in step 5 and which will be stored in different forms and formats for subsequent analyses
+ */
+
+/*
+ *  STEP 7 - this step ends with a file called hap_genotype, which has the information of the two most repeated haplotypes (per locus) observed across the samples analyzed
+ */
 
 
 // #########################################
