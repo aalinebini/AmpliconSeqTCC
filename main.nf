@@ -25,6 +25,7 @@ def helpMessage() {
     Options:
       --y [str]                       Mismatches in primer matching (number, default 1)
       --d [str]                       Parameter for trimming reads separated by ':', they are quality_score:minimum_read_length (default 20:100)
+      --c [str]                       Minimum copies for an haplotype across samples (default: 5)
     References                        If not specified in the configuration file or you wish to overwrite any of the references
       --fasta [file]                  Path to fasta reference
     Other options:
@@ -101,7 +102,7 @@ if (params.input){
     Channel
         .fromFilePairs( params.input  + params.extension, size: 2 )
         .ifEmpty { exit 1, "Cannot find any reads matching: ${params.input}/*${params.extension}\nNB: Path needs to be enclosed in quotes!" }
-        .into { ch_read_files_fastq }
+        .set { ch_read_files_fastq }
 }
 
 if (params.key_file){
@@ -129,32 +130,28 @@ if (params.key_file){
 } else { exit 1, "Option --key_file missing" }
 
 if (params.d){
-    
     parameter_d = params.d ==~ /^(\d+)\:(\d+)$/
-
     if (parameter_d){
             d_trim = params.d
     } else {
         println "--d parameter with error. Default set (20:100)!"
         d_trim = '20:100'
     }
-} else {
-    d_trim = '20:100'
-}
+} else { d_trim = '20:100' }
 
 if (params.y){
-
     parameter_y = params.y ==~ /^(\d+)$/
-
     if (parameter_y){
         y_mismatches = params.y
     } else {
         println "--y parameter with error. Default set 1!"
         y_mismatches = 1
     }
-} else {
-    y_mismatches = 1
-}
+} else { y_mismatches = 1 }
+
+if (params.c) {
+    min_copies = params.c
+} else { min_copies = 5 }
 
 
 // code to remove --------------------------------
@@ -183,6 +180,7 @@ summary['Input']            = params.input
 summary['Key_file']         = params.key_file
 summary['Quality Score (d)']= d_trim
 summary['Primer Mism. (y)'] = y_mismatches
+summary['Min copies hap (c)'] = min_copies
 summary['Max Resources']    = "$params.max_memory memory, $params.max_cpus cpus, $params.max_time time per job"
 if (workflow.containerEngine) summary['Container'] = "$workflow.containerEngine - $workflow.container"
 summary['Output dir']       = params.outdir
@@ -295,7 +293,6 @@ process trimming {
     LEADING:$quality_trimmer TRAILING:$quality_trimmer SLIDINGWINDOW:4:15 MINLEN:$minimum_length
     """
 }
-// ch_out_trimmomatic.view { "Received: $it" }
 
 /*
     STEP 2 - a consolidation of the reads is performed - Contiging the overlapping read pairs and discard the non-overlapping reads
@@ -330,7 +327,6 @@ process splittingByPrimer {
     file("*") into ch_out_split_aux
 
     script:
-
     prefix = sample + '_tig_'
 
     """
@@ -358,7 +354,7 @@ ch_out_split_aux
      tuple val(sample), path(files_splitted) from ch_out_split
 
      output:
-     tuple val(sample), file("*") into ch_out_collapse_sample
+     file("*") into ch_out_collapse_sample
 
     script:
     """
@@ -373,6 +369,12 @@ ch_out_split_aux
      done
      """
  }
+
+ch_out_collapse_sample
+.flatten()
+.set { ch_collapsed_files }
+
+//  ch_collapsed_files.view {"Received: $it"}
 
 /*
  *  STEP 5 - the grouped files are collapsed/grouped according to the primers
@@ -405,23 +407,58 @@ process collapsingByPrimer {
 
     output:
     tuple val(primer), file("${primer}") into ch_out_collapse_primer
-    
-    script:
-    """
-    if [ -s ${primer} ]; then {
-        fastx_collapser -i ${primer_merged} -o ${primer}
-    } else {
-        cat > ${primer}
-    }
-    fi
-    """
-}
 
-// ch_out_collapse_primer.view {"Received: $it"}
+    script:
+    if(primer_merged.size() > 0)
+        """
+        fastx_collapser -i ${primer_merged} -o ${primer}
+        """
+
+    else
+        """
+        cat > ${primer}
+        """
+}
 
 /*
  *  STEP 6 - the consolidation in by locus-sample bases of the information recovered in step 5 and which will be stored in different forms and formats for subsequent analyses
  */
+ process haplotype2sample_raw {
+    tag "$primer"
+    publishDir "${params.outdir}/haplotype2_sample_raw", mode: params.publish_dir_mode
+
+    input:
+    tuple val(primer), file(primer_collapsed) from ch_out_collapse_primer
+
+    output:
+    tuple val(primer), file("${primer}.haplotypes.txt")
+    val(primer) into ch_primers
+
+    when:
+    primer_collapsed.size() > 0
+
+    script:
+    """
+    haplotype2sample.py -i ${primer_collapsed} > ${primer}.haplotypes.txt
+    """
+ }
+
+ process haplotype2sample_table {
+    tag "$primer"
+    publishDir "${params.outdir}/haplotype2_sample_raw", mode: params.publish_dir_mode
+
+    input:
+    file(sample_primer) from ch_collapsed_files.collect()
+    val(primer) from ch_primers
+
+    output:
+    file("*")
+
+    script:
+    """
+    haplotype2sample_table.py -i ${sample_primer} -p ${primer} -c ${min_copies}
+    """
+ }
 
 /*
  *  STEP 7 - this step ends with a file called hap_genotype, which has the information of the two most repeated haplotypes (per locus) observed across the samples analyzed
