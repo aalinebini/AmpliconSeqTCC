@@ -26,6 +26,8 @@ def helpMessage() {
       --y [str]                       Mismatches in primer matching (number, default 1)
       --d [str]                       Parameter for trimming reads separated by ':', they are quality_score:minimum_read_length (default 20:100)
       --c [str]                       Minimum copies for an haplotype across samples (default: 5)
+      --t [str]                       Trimmomatic adaptor
+      --a [str]                       Minimum ratio of read count between the two haplotypes (low/high default: 0.2)
     References                        If not specified in the configuration file or you wish to overwrite any of the references
       --fasta [file]                  Path to fasta reference
     Other options:
@@ -94,7 +96,7 @@ ch_output_docs = file("$projectDir/docs/output.md", checkIfExists: true)
 ch_output_docs_images = file("$projectDir/docs/images/", checkIfExists: true)
 
 /*
- * Create a channel for input read files
+ * Parameters
  */
 
 //  input files
@@ -102,13 +104,21 @@ if (params.input){
     Channel
         .fromFilePairs( params.input  + params.extension, size: 2 )
         .ifEmpty { exit 1, "Cannot find any reads matching: ${params.input}/*${params.extension}\nNB: Path needs to be enclosed in quotes!" }
-        .set { ch_read_files_fastq }
+        .into { samples; ch_read_files_fastq }
+}
+
+// list with the sample names
+my_samples_list = []
+samples
+.map { sample ->
+    my_samples_list.add(sample[0])
 }
 
 if (params.key_file){
 
     key_file = file(params.key_file)
     def len_primer_list = []
+    my_primers_list = []
     barcode_file = file('results/barcode.txt')
     barcode_file.text = ""
 
@@ -125,6 +135,16 @@ if (params.key_file){
         if(strand == 'F'){
             seq = seq.substring(0, len_primer_list.min())
             barcode_file << "$name\t$seq\n"
+        }
+    }
+
+    // list with the primer names
+    key_file
+    .readLines()
+    .each{
+        (full, name, strand, seq) = (it =~ /(\S+)_([FR])\t(\S+)$/)[0]
+        if(strand == 'F'){
+            my_primers_list.add(name)
         }
     }
 } else { exit 1, "Option --key_file missing" }
@@ -153,6 +173,21 @@ if (params.c) {
     min_copies = params.c
 } else { min_copies = 5 }
 
+if (params.t) {
+    adapter = file("nf-core-ampliconseq/adapters/${params.t}", checkIfExists:true)
+} else {
+    adapter = file('nf-core-ampliconseq/adapters/TruSeq3-PE-2.fa')
+}
+
+if (params.a) {
+    a = params.a ==~ /(\d+.\d+)/
+    if (a){
+        a = params.a
+    } else {
+        println "--a parameter with error. Default set 0.2!"
+        a = 0.2
+    }
+} else { a = 0.2 }
 
 // code to remove --------------------------------
 // if (params.input_paths) {
@@ -169,7 +204,6 @@ if (params.c) {
 // }
 // code to remove --------------------------------
 
-
 // Header log info
 log.info nfcoreHeader()
 def summary = [:]
@@ -181,6 +215,8 @@ summary['Key_file']         = params.key_file
 summary['Quality Score (d)']= d_trim
 summary['Primer Mism. (y)'] = y_mismatches
 summary['Min copies hap (c)'] = min_copies
+summary['Trim adaptor (t)'] = adapter.baseName
+summary['Ratio hap (a)']    = a
 summary['Max Resources']    = "$params.max_memory memory, $params.max_cpus cpus, $params.max_time time per job"
 if (workflow.containerEngine) summary['Container'] = "$workflow.containerEngine - $workflow.container"
 summary['Output dir']       = params.outdir
@@ -248,6 +284,7 @@ process get_software_versions {
     multiqc --version > v_multiqc.txt
     trimmomatic -version > v_trimmomatic.txt
     flash -v > v_flash.txt
+    clustalo --version > v_clustalo.txt
     
     scrape_software_versions.py &> software_versions_mqc.yaml
     """
@@ -290,6 +327,7 @@ process trimming {
     $fq_1_unpaired \
     $fq_2_paired \
     $fq_2_unpaired \
+    ILLUMINACLIP:${adapter}:2:30:10 \
     LEADING:$quality_trimmer TRAILING:$quality_trimmer SLIDINGWINDOW:4:15 MINLEN:$minimum_length
     """
 }
@@ -374,8 +412,6 @@ ch_out_collapse_sample
 .flatten()
 .set { ch_collapsed_files }
 
-//  ch_collapsed_files.view {"Received: $it"}
-
 /*
  *  STEP 5 - the grouped files are collapsed/grouped according to the primers
  */
@@ -431,7 +467,7 @@ process collapsingByPrimer {
     tuple val(primer), file(primer_collapsed) from ch_out_collapse_primer
 
     output:
-    tuple val(primer), file("${primer}.haplotypes.txt")
+    file("${primer}.haplotypes.txt") into ch_haplotypes
     val(primer) into ch_primers
 
     when:
@@ -452,7 +488,7 @@ process collapsingByPrimer {
     val(primer) from ch_primers
 
     output:
-    file("*")
+    file("*") into ch_haplotypes2sample
 
     script:
     """
@@ -464,6 +500,22 @@ process collapsingByPrimer {
  *  STEP 7 - this step ends with a file called hap_genotype, which has the information of the two most repeated haplotypes (per locus) observed across the samples analyzed
  */
 
+process haplotype2fasta {
+    publishDir "${params.outdir}/haplotype2fasta", mode: params.publish_dir_mode
+
+    input:
+    file(haplotype2seqfile) from ch_haplotypes.collect()
+    file(haplotype2samplefile) from ch_haplotypes2sample.collect()
+
+    output:
+    file("*")
+
+    script:
+    """
+    step7.pl -s "${my_samples_list}" -p "${my_primers_list}" -h "[${haplotype2seqfile}]" -f "[${haplotype2samplefile}]" -m clustalo:clustal -a ${a}
+    """
+
+}
 
 // #########################################
 // ############ END MY WORKFLOW ############

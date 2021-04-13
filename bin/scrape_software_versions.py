@@ -10,6 +10,7 @@ regexes = {
     "MultiQC": ["v_multiqc.txt", r"multiqc, version (\S+)"],
     "Trimmomatic": ['v_trimmomatic.txt', r"(\S+)"],
     "Flash": ['v_flash.txt', r"FLASH v(\d+.\d+.\d+)"],
+    "Clustalo": ['v_clustalo.txt', r"(.+)"],
 
 }
 results = OrderedDict()
