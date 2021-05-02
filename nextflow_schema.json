@@ -2,7 +2,7 @@
     "$schema": "http://json-schema.org/draft-07/schema",
     "$id": "https://raw.githubusercontent.com/nf-core/ampliconseq/master/nextflow_schema.json",
     "title": "nf-core/ampliconseq pipeline parameters",
-    "description": "TCC project",
+    "description": "Pipeline for DNA amplicon analysis",
     "type": "object",
     "definitions": {
         "input_output_options": {
@@ -13,6 +13,12 @@
             "required": [
                 "input"
             ],
+            "extension": {
+                "type": "string",
+                "default": "/*_R{1,2}_001.fastq.gz",
+                "description": "Naming of sequencing files",
+                "help_text": "Indicates the naming of sequencing files (default: `\"/*_R{1,2}_001.fastq.gz\"`).\n\nPlease note:\n\n1. The prepended slash (`/`) is required\n2. The star (`*`) is the required wildcard for sample names\n3. The curly brackets (`{}`) enclose the orientation for paired end reads, seperated by a comma (`,`).\n4. The pattern must be enclosed in quotes\n\nFor example for one sample (name: `1`) with forward (file: `1_a.fastq.gz`) and reverse (file: `1_b.fastq.gz`) reads in folder `data`:\n\n```bash\n--input \"data\" --extension \"/*_{a,b}.fastq.gz\"\n```"
+            },
             "properties": {
                 "input": {
                     "type": "string",
@@ -20,16 +26,22 @@
                     "description": "Input FastQ files.",
                     "help_text": "Use this to specify the location of your input FastQ files. For example:\n\n```bash\n--input 'path/to/data/sample_*_{1,2}.fastq'\n```\n\nPlease note the following requirements:\n\n1. The path must be enclosed in quotes\n2. The path must have at least one `*` wildcard character\n3. When using the pipeline with paired end data, the path must use `{1,2}` notation to specify read pairs.\n\nIf left unspecified, a default pattern is used: `data/*{1,2}.fastq.gz`"
                 },
-                "single_end": {
-                    "type": "boolean",
-                    "description": "Specifies that the input is single-end reads.",
-                    "fa_icon": "fas fa-align-center",
-                    "help_text": "By default, the pipeline expects paired-end data. If you have single-end data, you need to specify `--single_end` on the command line when you launch the pipeline. A normal glob pattern, enclosed in quotation marks, can then be used for `--input`. For example:\n\n```bash\n--single_end --input '*.fastq'\n```\n\nIt is not possible to run a mixture of single-end and paired-end files in one run."
+                "key_file": {
+                    "type": "string",
+                    "fa_icon": "fas fa-dna",
+                    "description": "File with primer names and primer sequences.",
+                    "help_text": "A two-column, tab separated text file (key_file.txt) listing the primer names (ending _F and _R to indicate forward and reverse primer) and primer sequences"
                 },
                 "outdir": {
                     "type": "string",
                     "description": "The output directory where the results will be saved.",
                     "default": "./results",
+                    "fa_icon": "fas fa-folder-open"
+                },
+                "d": {
+                    "type": "string",
+                    "description": "parameter for trimming reads, using 2 numbers separated by ':'. Default: 20:100. They are: quality score:minimum_read_length.",
+                    "default": "20:100",
                     "fa_icon": "fas fa-folder-open"
                 },
                 "email": {
@@ -47,12 +59,6 @@
             "fa_icon": "fas fa-dna",
             "description": "Options for the reference genome indices used to align reads.",
             "properties": {
-                "genome": {
-                    "type": "string",
-                    "description": "Name of iGenomes reference.",
-                    "fa_icon": "fas fa-book",
-                    "help_text": "If using a reference genome configured in the pipeline using iGenomes, use this parameter to give the ID for the reference. This is then used to build the full paths for all required reference genome files e.g. `--genome GRCh38`.\n\nSee the [nf-core website docs](https://nf-co.re/usage/reference_genomes) for more details."
-                },
                 "fasta": {
                     "type": "string",
                     "fa_icon": "fas fa-font",
