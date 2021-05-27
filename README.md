@@ -13,7 +13,9 @@
 ## Introduction
 
 <!-- TODO nf-core: Write a 1-2 sentence summary of what data the pipeline is for and what it does -->
-**nf-core/ampliconseq** is a bioinformatics best-practise analysis pipeline for
+**nf-core/ampliconseq** is a bioinformatics best-practise analysis pipeline for Illumina paired-end amplified sequence data.
+
+From the amplicons, haplotypes are generated in order to find existing polymorphisms in the fragments. As a result, tables and alignment files are generated to make comparisons between haplotypes.
 
 The pipeline is built using [Nextflow](https://www.nextflow.io), a workflow tool to run tasks across multiple compute infrastructures in a very portable manner. It comes with docker containers making installation trivial and results highly reproducible.
 
@@ -49,10 +51,17 @@ By default, the pipeline currently performs the following:
 
 * Sequencing quality control (`FastQC`)
 * Overall pipeline run summaries (`MultiQC`)
+* Trimming adapters and discard low quality readings (`Trimmomatic`)
+* Contiging the reading pairs (`Flash`)
+* Splitting of the readings according to the amplicons (`FASTX-Toolkit, Barcode Splitter`)
+* Collapsing identical reads according to the samples (`FASTX-Toolkit, Collapser`)
+* The files are grouped according to the amplicons (`FASTX-Toolkit, Collapser`)
+* Tables with the haplotypes found and the number of haplotypes per sample
+* Archives fasta with more frequent haplotypes and alignment with each other. Two tables with information on the two most recurrent haplotypes in each sample
 
-## Documentation
+<!-- ## Documentation
 
-The nf-core/ampliconseq pipeline comes with documentation about the pipeline: [usage](https://nf-co.re/ampliconseq/usage) and [output](https://nf-co.re/ampliconseq/output).
+The nf-core/ampliconseq pipeline comes with documentation about the pipeline: [usage](https://nf-co.re/ampliconseq/usage) and [output](https://nf-co.re/ampliconseq/output). -->
 
 <!-- TODO nf-core: Add a brief overview of what the pipeline does and how it works -->
 
@@ -60,8 +69,8 @@ The nf-core/ampliconseq pipeline comes with documentation about the pipeline: [u
 
 nf-core/ampliconseq was originally written by Aline Bini.
 
-We thank the following people for their extensive assistance in the development
-of this pipeline:
+<!--  We thank the following people for their extensive assistance in the development
+of this pipeline: -->
 
 <!-- TODO nf-core: If applicable, make list of people who have also contributed -->
 
@@ -88,3 +97,5 @@ You can cite the `nf-core` publication as follows:
 In addition, references of tools and data used in this pipeline are as follows:
 
 <!-- TODO nf-core: Add bibliography of tools and data used in your pipeline -->
+
+> Yang, S., Fresnedo-Ramírez, J., Wang, M. et al. A next-generation marker genotyping platform (AmpSeq) in heterozygous crops: a case study for marker-assisted selection in grapevine. Hortic Res 3, 16002 (2016). https://doi.org/10.1038/hortres.2016.2
